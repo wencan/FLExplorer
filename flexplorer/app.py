@@ -150,7 +150,7 @@ class App:
                 # self._auto_adjust_height_for_text(text)
                 self._root.after_idle(self._auto_adjust_height_for_text, text)
             else:
-                if idx < self._visible_paragraph_num:
+                if self._visible_paragraph_num > len(paragraphs):
                     frame.grid_remove()
                     text.delete("1.0", tk.END)
                     self._visible_paragraph_num -= 1
