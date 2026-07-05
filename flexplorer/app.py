@@ -4,7 +4,7 @@ import tkinter.filedialog as fd
 import os.path
 import pathlib
 import io
-from typing import cast, List, Tuple
+from typing import cast, List, Tuple, Callable
 from flexplorer.worker import Worker
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "resources", "icons")
@@ -25,7 +25,9 @@ class App:
             Tuple[ttk.Frame, tk.Text]
         ] = []  # contain hidden widgets
         self._visible_paragraph_num: int = 0
-        self._waiting_paragraphs: List[str] = []
+        self._pending_paragraphs: List[str] = []
+
+        self._pending_idle_tasks: List[Callable] = []
 
         self._selected_chapter_index: str = ""
         self._worker: Worker | None = None
@@ -138,33 +140,26 @@ class App:
         )
 
     def update_paragraphs(self, paragraphs: List[str]):
-        for idx, (frame, text) in enumerate(self._all_paragraph_texts):
-            if idx < len(paragraphs):
-                if idx < self._visible_paragraph_num:
-                    text.delete("1.0", tk.END)
-                else:
-                    frame.grid()
-                    self._visible_paragraph_num += 1
+        self._cleanup_chapter()
+        self._cleanup_idle_tasks()
 
-                text.insert(tk.END, paragraphs[idx])
-                # self._auto_adjust_height_for_text(text)
-                self._root.after_idle(self._auto_adjust_height_for_text, text)
-            else:
-                if self._visible_paragraph_num > len(paragraphs):
-                    frame.grid_remove()
-                    text.delete("1.0", tk.END)
-                    self._visible_paragraph_num -= 1
+        for idx, paragraph in enumerate(paragraphs):
+            _, text = self._add_paragraph_text(paragraph)
 
-        if len(paragraphs) > len(self._all_paragraph_texts):
-            self._waiting_paragraphs = paragraphs[len(self._all_paragraph_texts) :]
-            self._root.after_idle(self._add_paragraph_text_task)
+            text.update_idletasks()
+            c_y1 = self._root.winfo_rooty() + self._root.winfo_height()
+            t_y0 = text.winfo_rooty()
+            if t_y0 > c_y1:  # not visible
+                self._pending_paragraphs = paragraphs[idx + 1 :]
+                self._push_idle_task(self._add_paragraph_text_task)
+                break
 
     def _on_text_mousewheel(self, event: tk.Event):
         assert self._chapter_canvas is not None
         self._chapter_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         return "break"
 
-    def _add_paragraph_text(self, paragraph: str = "") -> Tuple[ttk.Frame, tk.Text]:
+    def _create_paragraph_text(self, paragraph: str = "") -> Tuple[ttk.Frame, tk.Text]:
         assert self._paragraphs_frame is not None
         frame = ttk.Frame(self._paragraphs_frame)
         frame.grid(
@@ -187,7 +182,24 @@ class App:
 
         return frame, text
 
+    def _add_paragraph_text(self, paragraph: str = "") -> Tuple[ttk.Frame, tk.Text]:
+        if len(self._all_paragraph_texts) > self._visible_paragraph_num:
+            frame, text = self._all_paragraph_texts[self._visible_paragraph_num]
+            frame.grid()
+            text.delete("1.0", tk.END)
+            text.insert(tk.END, paragraph)
+            # self._auto_adjust_height_for_text(text)
+            self._root.after_idle(self._auto_adjust_height_for_text, text)
+            self._visible_paragraph_num += 1
+            return frame, text
+        else:
+            return self._create_paragraph_text(paragraph)
+
     def _auto_adjust_height_for_text(self, text: tk.Text):
+        if not text.winfo_ismapped():
+            self._root.after_idle(self._auto_adjust_height_for_text, text)
+            return
+
         text.update_idletasks()
         display_lines = text.count("1.0", tk.END, "displaylines")
         line_count = display_lines[0] if display_lines else 1
@@ -195,13 +207,13 @@ class App:
         text.configure(height=line_count)
 
     def _add_paragraph_text_task(self):
-        if len(self._waiting_paragraphs) == 0:
+        if len(self._pending_paragraphs) == 0:
             return
 
-        paragraph = self._waiting_paragraphs.pop(0)
+        paragraph = self._pending_paragraphs.pop(0)
         self._add_paragraph_text(paragraph)
 
-        if len(self._waiting_paragraphs) > 0:
+        if len(self._pending_paragraphs) > 0:
             self._root.after_idle(self._add_paragraph_text_task)
 
     def _on_open_file(self, *args):
@@ -219,19 +231,34 @@ class App:
             self._worker.close()
             self._worker = None
 
-        self._cleanup_chapter()
-
         assert self._chapters_tree is not None
         self._chapters_tree.delete(*self._chapters_tree.get_children())
 
         self._current_content_index = ""
+
+        self._cleanup_chapter()
+        self._cleanup_idle_tasks()
 
     def _cleanup_chapter(self):
         for idx in range(self._visible_paragraph_num):
             frame, _ = self._all_paragraph_texts[idx]
             frame.grid_remove()
         self._visible_paragraph_num = 0
-        self._waiting_paragraphs = []
+
+    def _push_idle_task(self, task: Callable):
+        self._pending_idle_tasks.append(task)
+        self._root.after_idle(self._do_idle_task)
+
+    def _do_idle_task(self):
+        if len(self._pending_idle_tasks) == 0:
+            return
+
+        task = self._pending_idle_tasks.pop(0)
+        task()
+
+    def _cleanup_idle_tasks(self):
+        self._pending_idle_tasks = []
+        self._pending_paragraphs = []
 
     def _open_new_file(self, filepath: str, encoding: str = "utf-8"):
         self._cleanup()
