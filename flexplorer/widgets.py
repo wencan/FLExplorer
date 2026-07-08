@@ -1,9 +1,19 @@
 from dataclasses import dataclass
 import tkinter as tk
 import tkinter.font as tkfont
-from typing import List, Literal, Tuple
+from typing import Any, List, Literal, Mapping, Tuple
 
 __all__ = ["TextList"]
+
+
+def supported_options(
+    widget: tk.Widget, options: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    conf = widget.configure()
+    if conf is None:
+        return options
+    else:
+        return {k: v for k, v in options.items() if k in conf.keys()}
 
 
 class MeasureText(tk.Text):
@@ -14,7 +24,6 @@ class MeasureText(tk.Text):
 
     def __init__(self, master, cnf={}, **kwargs):
         super().__init__(master, cnf, **kwargs)
-        self.config(state=tk.DISABLED)
 
         self._width_inmemory: int = 0
         self._display_lines_inmemory: int = 0
@@ -23,10 +32,8 @@ class MeasureText(tk.Text):
         self.bind("<Configure>", self._on_configure)
 
     def update_text(self, s: str):
-        self.config(state=tk.NORMAL)
         self.delete("1.0", tk.END)
         self.insert("1.0", s)
-        self.config(state=tk.DISABLED)
 
         self._width_inmemory = 0
         self._display_lines_inmemory = 0
@@ -74,7 +81,7 @@ class MeasureText(tk.Text):
         font = tkfont.nametofont(self.cget("font"))
         line_height = font.metrics("linespace")
 
-        border = int(self.cget("bd"))
+        border = int(self.cget("borderwidth"))  # alias: bd
 
         highlight = int(self.cget("highlightthickness"))
 
@@ -128,9 +135,12 @@ class ScrolledFrame(tk.Frame):
     ):
         super().__init__(master, **kwargs)
 
+        self.configure(**supported_options(self, kwargs))
+
         self._canvas = tk.Canvas(self)
         scrollbar = tk.Scrollbar(self, orient=tk.VERTICAL, command=self._on_scrollbar)
         self._canvas.configure(yscrollcommand=scrollbar.set)
+        self._canvas.configure(**supported_options(self._canvas, kwargs))
         self._canvas.grid(column=0, row=0, sticky=tk.NSEW)
         scrollbar.grid(column=1, row=0, sticky=tk.N + tk.S + tk.E)
         self.rowconfigure(0, weight=1)
@@ -142,7 +152,7 @@ class ScrolledFrame(tk.Frame):
 
         self._scroll_fps = scroll_fps
         self._scroll_step_px = scroll_step_px  # step size
-        self._scrolling_offset: float = 0.0
+        self._scrolling_offset: float = 0.0  # remaining distance
 
     def _on_configure(self, event: tk.Event):
         pass
@@ -221,6 +231,7 @@ class ScrolledFrame(tk.Frame):
         fraction = viewport_y0_next / scrollregion_height
         self._canvas.yview_moveto(fraction)
 
+        # remaining distance
         self._scrolling_offset -= step
 
         self.after(int(1000 / self._scroll_fps), self._scroll_step)
@@ -240,18 +251,23 @@ class TextList(ScrolledFrame):
     def __init__(
         self,
         master,
-        text_wrap: Literal["none", "char", "word"] = "word",
+        wrap: Literal["none", "char", "word"] = "word",
         item_pady=4,
         scroll_fps=60,
         scroll_step_px=30,
+        text_style_options: Mapping[str, Any] | None = None,
         **kwargs,
     ):
         super().__init__(
-            master, scroll_fps=scroll_fps, scroll_step_px=scroll_step_px, **kwargs
+            master,
+            scroll_fps=scroll_fps,
+            scroll_step_px=scroll_step_px,
+            **kwargs,
         )
 
-        self._text_wrap: Literal["none", "char", "word"] = text_wrap
+        self._wrap: Literal["none", "char", "word"] = wrap
         self._item_pady = item_pady
+        self._text_style_options: Mapping[str, Any] = text_style_options or {}
 
         self._strings: List[str] = []
         self._text_pixel_heights: List[int] = []
@@ -261,7 +277,7 @@ class TextList(ScrolledFrame):
         self._unused_texts: List[tk.Text] = []
 
         # hidden measure widget
-        self._measure_text = MeasureText(self._canvas, wrap=self._text_wrap)
+        self._measure_text = MeasureText(self._canvas, wrap=self._wrap)
         # text height compute depends on the layout.
         # only the x and y coordinate parameters are known.
         # the width parameter will be updated later.
@@ -342,7 +358,9 @@ class TextList(ScrolledFrame):
                     self._canvas.coords(item.wid, 0, y0)
                 else:
                     text = self._acquire_unused_item()
+                    text.configure(state=tk.NORMAL)
                     text.insert(tk.END, s)
+                    text.configure(state=tk.DISABLED)
                     wid = self._canvas.create_window(
                         0,
                         y0,
@@ -373,6 +391,7 @@ class TextList(ScrolledFrame):
         if len(self._unused_texts) > 0:
             return self._unused_texts.pop(0)
         else:
-            text = tk.Text(self._canvas, wrap=self._text_wrap)
+            text = tk.Text(self._canvas, wrap=self._wrap)
+            text.configure(**self._text_style_options)
             text.bind("<MouseWheel>", self._on_mousewheel)
             return text

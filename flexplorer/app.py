@@ -4,13 +4,17 @@ import tkinter.filedialog as fd
 import os.path
 import pathlib
 import io
-from typing import cast, List
+from typing import Any, cast, List
 from flexplorer.worker import Worker
 from flexplorer.widgets import TextList
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "resources", "icons")
 OPEN_ICON_PATH = os.path.join(ICON_PATH, "document-open.png")
 EXIT_ICON_PATH = os.path.join(ICON_PATH, "application-exit.png")
+
+
+STYLE_MAIN_BG = "white"
+STYLE_MAIN_FG = "#2D2D2D"
 
 
 class App:
@@ -85,7 +89,18 @@ class App:
         self._chapters_tree.bind("<<TreeviewSelect>>", self._on_select_chapter)
 
         # main text
-        self._main_text = TextList(body_paned)
+        text_style_options = {
+            "background": STYLE_MAIN_BG,  # alias: bg
+            "foreground": STYLE_MAIN_FG,  # alias: fg
+            "borderwidth": 0,  # alias: bd
+            "highlightthickness": 0,
+        }
+        kwargs: dict[str, Any] = {
+            "background": STYLE_MAIN_BG,
+        }
+        self._main_text = TextList(
+            body_paned, text_style_options=text_style_options, **kwargs
+        )
         body_paned.add(self._main_text, weight=1)
 
         # update
