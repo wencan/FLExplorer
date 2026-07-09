@@ -13,28 +13,26 @@ from typing import (
     get_type_hints,
 )
 
-__all__ = ["SETTINGS", "save_settings"]
+__all__ = ["APP_NAME", "SYS_NAME", "SETTINGS", "save_settings"]
 
-_APP_NAME = "FLExplorer"
+APP_NAME = "FLExplorer"
 
-_SYS_NAME = platform.system()
+SYS_NAME = platform.system()
 
 
 def _config_dir_path() -> str:
     home_path = str(pathlib.Path.home())
-    if _SYS_NAME == "Windows":
+    if SYS_NAME == "Windows":
         config_dir = os.path.join(
             os.environ.get("LOCALAPPDATA", os.path.join(home_path, "AppData", "Local")),
-            _APP_NAME,
+            APP_NAME,
         )
-    elif _SYS_NAME == "Linux":
-        config_dir = os.path.join(home_path, ".config", _APP_NAME)
-    elif _SYS_NAME == "Darwin":
-        config_dir = os.path.join(
-            home_path, "Library", "Application Support", _APP_NAME
-        )
+    elif SYS_NAME == "Linux":
+        config_dir = os.path.join(home_path, ".config", APP_NAME)
+    elif SYS_NAME == "Darwin":
+        config_dir = os.path.join(home_path, "Library", "Application Support", APP_NAME)
     else:
-        raise NotImplementedError(f"Unsupported platform: {_SYS_NAME}")
+        raise NotImplementedError(f"Unsupported platform: {SYS_NAME}")
     return config_dir
 
 

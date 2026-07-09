@@ -7,7 +7,7 @@ import io
 from typing import Any, cast, List
 from flexplorer.worker import Worker
 from flexplorer.widgets import TextList
-from flexplorer.settings import SETTINGS, save_settings
+from flexplorer.settings import APP_NAME, SYS_NAME, SETTINGS, save_settings
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "resources", "icons")
 OPEN_ICON_PATH = os.path.join(ICON_PATH, "document-open.png")
@@ -21,7 +21,7 @@ STYLE_MAIN_FG = "#2D2D2D"
 class App:
     def __init__(self):
         self._root = tk.Tk()
-        self._root.title("FLExplorer")
+        self._root.title(APP_NAME)
 
         self._chapters_tree: ttk.Treeview | None = None
         self._main_text: TextList | None = None
@@ -32,9 +32,14 @@ class App:
 
     def _setup_ui(self):
         # ------ main windows ------
-        w = self._root.winfo_screenwidth()
-        h = self._root.winfo_screenheight()
-        self._root.geometry(f"{w}x{h}+0+0")  # max window
+        if SYS_NAME == "Windows":
+            self._root.state("zoomed")
+        elif SYS_NAME == "Linux":
+            self._root.attributes("-zoomed", True)
+        else:  # mac and others
+            w = self._root.winfo_screenwidth()
+            h = self._root.winfo_screenheight()
+            self._root.geometry(f"{w}x{h}+0+0")
         self._root.rowconfigure(0, weight=1)
         self._root.columnconfigure(0, weight=1)
 
@@ -147,7 +152,7 @@ class App:
             self._chapters_tree.insert(parent_index, "end", index, text=title)
 
         # update title
-        self._root.title(f"FLExplorer - {self._worker.book_title()}")
+        self._root.title(f"{APP_NAME} - {self._worker.book_title()}")
 
     def _on_select_chapter(self, *args):
         assert self._chapters_tree is not None
