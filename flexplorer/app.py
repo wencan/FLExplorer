@@ -7,7 +7,12 @@ import io
 from typing import Any, cast, List
 from flexplorer.worker import Worker
 from flexplorer.widgets import TextList
-from flexplorer.settings import APP_NAME, SYS_NAME, SETTINGS, save_settings
+from flexplorer.settings import (
+    APP_NAME,
+    SYS_NAME,
+    load_settings,
+    save_settings,
+)
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "resources", "icons")
 OPEN_ICON_PATH = os.path.join(ICON_PATH, "document-open.png")
@@ -20,6 +25,8 @@ STYLE_MAIN_FG = "#2D2D2D"
 
 class App:
     def __init__(self):
+        self._settings = load_settings()
+
         self._root = tk.Tk()
         self._root.title(APP_NAME)
 
@@ -114,7 +121,7 @@ class App:
         body_paned.sashpos(0, self._root.winfo_width() // 5)
 
     def _on_open_file(self, *args):
-        initialdir = SETTINGS.recent.open_file_dirpath
+        initialdir = self._settings.recent.open_file_dirpath
         if initialdir == "":
             initialdir = str(pathlib.Path.home())
 
@@ -127,8 +134,8 @@ class App:
             file = cast(io.TextIOWrapper, file)
             self._open_new_file(file.name, file.encoding)
 
-            SETTINGS.recent.open_file_dirpath = os.path.dirname(file.name)
-            save_settings()
+            self._settings.recent.open_file_dirpath = os.path.dirname(file.name)
+            save_settings(self._settings)
 
     def _cleanup(self):
         if self._worker is not None:
