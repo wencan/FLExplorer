@@ -4,9 +4,8 @@ import tkinter.filedialog as fd
 import os.path
 import pathlib
 import io
-from typing import Any, cast, List
+from typing import cast, List
 from flexplorer.worker import Worker
-from flexplorer.widgets import TextList
 from flexplorer.settings import (
     APP_NAME,
     SYS_NAME,
@@ -19,10 +18,6 @@ OPEN_ICON_PATH = os.path.join(ICON_PATH, "document-open.png")
 EXIT_ICON_PATH = os.path.join(ICON_PATH, "application-exit.png")
 
 
-STYLE_MAIN_BG = "white"
-STYLE_MAIN_FG = "#2D2D2D"
-
-
 class App:
     def __init__(self):
         self._settings = load_settings()
@@ -31,7 +26,10 @@ class App:
         self._root.title(APP_NAME)
 
         self._chapters_tree: ttk.Treeview | None = None
-        self._main_text: TextList | None = None
+        self._main_text: tk.Text | None = None
+
+        self._text_indexes: List[str] = []
+
         self._selected_chapter_index: str = ""
         self._worker: Worker | None = None
 
@@ -50,14 +48,14 @@ class App:
         self._root.rowconfigure(0, weight=1)
         self._root.columnconfigure(0, weight=1)
 
-        main_frame = ttk.Frame(self._root)
-        main_frame.grid(column=0, row=0, sticky=tk.NSEW)
-        main_frame.columnconfigure(0, weight=1)
+        root_frame = ttk.Frame(self._root)
+        root_frame.grid(column=0, row=0, sticky=tk.NSEW)
+        root_frame.columnconfigure(0, weight=1)
 
         # ------ ToolBar ------
-        toolbar_frame = ttk.Frame(main_frame)
+        toolbar_frame = ttk.Frame(root_frame)
         toolbar_frame.grid(column=0, row=0, sticky=tk.NSEW)
-        main_frame.rowconfigure(0, weight=0)
+        root_frame.rowconfigure(0, weight=0)
 
         open_icon = tk.PhotoImage(file=OPEN_ICON_PATH)
         self._icons.append(open_icon)
@@ -82,9 +80,9 @@ class App:
         exit_btn.grid(column=1, row=0, sticky=tk.W)
 
         # ------ Body ------
-        body_paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        body_paned = ttk.PanedWindow(root_frame, orient=tk.HORIZONTAL)
         body_paned.grid(column=0, row=1, sticky=tk.NSEW)
-        main_frame.rowconfigure(1, weight=1)
+        root_frame.rowconfigure(1, weight=1)
 
         # chapter tree
         chapter_tree_frame = ttk.Frame(body_paned)
@@ -97,24 +95,25 @@ class App:
         chapter_tree_scroolbar.grid(column=1, row=0, sticky=tk.NSEW)
         chapter_tree_frame.rowconfigure(0, weight=1)
         chapter_tree_frame.columnconfigure(0, weight=1)
-        body_paned.add(chapter_tree_frame, weight=1)
-
+        body_paned.add(chapter_tree_frame, weight=0)
         self._chapters_tree.bind("<<TreeviewSelect>>", self._on_select_chapter)
 
-        # main text
-        text_style_options = {
-            "background": STYLE_MAIN_BG,  # alias: bg
-            "foreground": STYLE_MAIN_FG,  # alias: fg
-            "borderwidth": 0,  # alias: bd
-            "highlightthickness": 0,
-        }
-        kwargs: dict[str, Any] = {
-            "background": STYLE_MAIN_BG,
-        }
-        self._main_text = TextList(
-            body_paned, text_style_options=text_style_options, **kwargs
+        # content
+        content_frame = ttk.Frame(body_paned)
+        body_paned.add(content_frame, weight=1)
+
+        self._main_text = tk.Text(content_frame)
+        self._main_text.grid(column=0, row=0, sticky=tk.NSEW)
+        content_frame.columnconfigure(0, weight=1)
+        content_vsrollbar = ttk.Scrollbar(
+            content_frame, orient=tk.VERTICAL, command=self._main_text.yview
         )
-        body_paned.add(self._main_text, weight=1)
+        self._main_text.configure(yscrollcommand=content_vsrollbar.set)
+        content_vsrollbar.grid(column=1, row=0, sticky=tk.N + tk.S + tk.E)
+        content_frame.rowconfigure(0, weight=1)
+        content_frame.columnconfigure(1, weight=0)
+        self._main_text.bind("<Motion>", self._on_text_motion)
+        self._main_text.configure(state=tk.DISABLED)
 
         # update
         self._root.update()
@@ -146,7 +145,11 @@ class App:
         self._chapters_tree.delete(*self._chapters_tree.get_children())
 
         assert self._main_text is not None
-        self._main_text.update_texts([])
+        self._main_text.configure(state=tk.NORMAL)
+        self._main_text.delete("1.0", tk.END)
+        self._main_text.configure(state=tk.DISABLED)
+
+        self._selected_chapter_index = ""
 
     def _open_new_file(self, filepath: str, encoding: str = "utf-8"):
         self._cleanup()
@@ -172,8 +175,28 @@ class App:
 
         assert self._worker is not None
         paragraphs = self._worker.book_chapter(self._selected_chapter_index)
+
         assert self._main_text is not None
-        self._main_text.update_texts(paragraphs)
+        self._main_text.configure(state=tk.NORMAL)
+        self._main_text.delete("1.0", tk.END)
+        for idx, paragraph in enumerate(paragraphs):
+            start = self._main_text.index("end-1c")
+            self._main_text.insert("end-1c", paragraph.strip())
+            end = self._main_text.index("end-1c")
+            self._main_text.tag_add(f"paragraph_{idx}", start, end)
+            if idx != len(paragraphs) - 1:
+                self._main_text.insert("end-1c", "\n")
+        self._main_text.configure(state=tk.DISABLED)
+
+    def _on_text_motion(self, event: tk.Event):
+        assert self._main_text is not None
+        index = self._main_text.index(f"@{event.x},{event.y}")
+        tags = self._main_text.tag_names(index)
+        if tags:
+            for tag in tags:
+                if tag.startswith("paragraph_"):
+                    pindex = int(tag[10:])
+                    print(pindex)
 
     def _on_exit(self, *args):
         self._root.destroy()
