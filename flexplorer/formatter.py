@@ -2,7 +2,7 @@ from flexplorer.formats.epub import Epub
 from typing import List, Tuple
 
 
-class Worker:
+class Formatter:
     def __init__(self, filepath: str, encoding: str = "utf-8"):
         self._epub = Epub(filepath, encoding)
 
