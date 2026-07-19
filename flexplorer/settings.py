@@ -31,8 +31,11 @@ __all__ = [
     "SYS_NAME",
     "load_settings",
     "save_settings",
-    "LLM",
-    "Recent",
+    "Cipher",
+    "LLMSetting",
+    "LLMProvider",
+    "LLMReasoningEffort",
+    "RecentSetting",
     "Settings",
 ]
 
@@ -50,28 +53,40 @@ if os.path.exists("/etc/machine-id"):
 
 
 @dataclasses.dataclass
-class Recent:
+class RecentSetting:
     open_file_dirpath: str = ""
 
 
 class Cipher(str): ...
 
 
+LLMProvider = Literal[
+    "DeepSeek",
+    "SiliconFlow",
+    "OpenRouter",
+    "OpenAI",
+    "OpenAI-compatible",
+]
+
+# https://developers.openai.com/api/docs/guides/reasoning#reasoning-effort
+LLMReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+
+
 @dataclasses.dataclass
-class LLM:
+class LLMSetting:
     name: str = ""
-    provider: Literal["deepseek"] = "deepseek"
+    provider: LLMProvider = "DeepSeek"
+    base_url: str = ""
     api_key: Cipher = dataclasses.field(default_factory=Cipher)
     model: str = ""
-    completions_url: str = ""
-    thinking: bool = False
-    preferred: bool = False
+    # https://developers.openai.com/api/docs/guides/reasoning#reasoning-effort
+    reasoning_effort: LLMReasoningEffort = "none"
 
 
 @dataclasses.dataclass
 class Settings:
-    recent: Recent = dataclasses.field(default_factory=Recent)
-    llms: List[LLM] = dataclasses.field(default_factory=list)
+    recent: RecentSetting = dataclasses.field(default_factory=RecentSetting)
+    llms: List[LLMSetting] = dataclasses.field(default_factory=list)
 
 
 def _setting_dir_path() -> str:
@@ -166,7 +181,7 @@ class LinuxCryptex:
         if r.returncode == 0:
             return r.stdout.strip()
         elif r.returncode == 1:  # not found
-            raise DecryptError()
+            raise DecryptError("not found")
         else:
             raise CalledProcessError(
                 r.returncode, cmd, output=r.stdout, stderr=r.stderr
@@ -239,7 +254,7 @@ class WindowsCryptex:
         try:
             in_blob = _to_blob(base64.urlsafe_b64decode(ciphertext.encode("utf-8")))
         except binascii.Error as e:  # invalid base64
-            raise DecryptError from e
+            raise DecryptError("invalid base64 data") from e
         entropy = "-".join([f"{k}:{v}" for k, v in attrs.items()])
         entropy_blob = _to_blob(entropy.encode("utf-8"))
         entropy_blob_ptr = ctypes.byref(entropy_blob)
@@ -258,7 +273,9 @@ class WindowsCryptex:
         )
         if not success:
             # raise ctypes.WinError(ctypes.get_last_error())  # type: ignore
-            raise DecryptError from ctypes.WinError(ctypes.get_last_error())  # type: ignore
+            raise DecryptError("failed to decrypt") from ctypes.WinError(  # type: ignore
+                ctypes.get_last_error()  # type: ignore
+            )
 
         bs = _from_blob(out_blob)
         return bs.decode("utf-8")
@@ -324,7 +341,7 @@ class DarwinCryptex:
             output = r.stdout.strip()
             return bytes.fromhex(output).decode("utf-8")
         elif r.returncode == 44:
-            raise DecryptError()
+            raise DecryptError("not found")
         else:
             raise CalledProcessError(
                 r.returncode, cmd, output=r.stdout, stderr=r.stderr
@@ -442,7 +459,7 @@ class SimpleCryptex:
             decrypted = _simple_decrypt(decoded, key.encode())
             return decrypted.decode("utf-8")
         except binascii.Error as e:  # invalid base64
-            raise DecryptError from e
+            raise DecryptError("invalid ciphertext") from e
 
     def clean(self, attrs: OrderedDict[str, str]):
         pass

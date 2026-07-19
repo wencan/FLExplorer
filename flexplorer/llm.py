@@ -2,7 +2,13 @@ import json
 import urllib.parse
 import asyncio
 import ssl
-from typing import Any, Dict, Literal, AsyncGenerator, Tuple
+from typing import Any, Dict, AsyncGenerator, Tuple
+from flexplorer.settings import LLMProvider, LLMReasoningEffort
+
+__all__ = [
+    "LLMApiError",
+    "translate",
+]
 
 
 class LLMApiError(Exception):
@@ -15,7 +21,7 @@ class LLMApiError(Exception):
         return f"{self.code}: {self.message}"
 
 
-default_ssl_context = ssl.create_default_context()
+_default_ssl_context = ssl.create_default_context()
 
 
 async def _receive_response_body(
@@ -158,13 +164,13 @@ async def _parse_llm_stream_response(
                     pass
 
 
-async def chat_completion(
+async def _chat_completion(
     base_url: str,
     api_key: str | None,
     req_body: Dict[str, Any],
     stream: bool = False,
     connection_timeout: float = 5.0,
-) -> Tuple[int, str, Dict[str, str], AsyncGenerator[str] | None]:
+) -> AsyncGenerator[str]:
     completions_url = urllib.parse.urljoin(base_url, "/chat/completions")
     url = urllib.parse.urlparse(completions_url)
     if url.scheme not in ("http", "https"):
@@ -177,7 +183,7 @@ async def chat_completion(
     ssl_context = None
     server_hostname = None
     if is_ssl:
-        ssl_context = ssl.create_default_context()
+        ssl_context = _default_ssl_context
         server_hostname = host
 
     if stream != bool(req_body.get("stream")):
@@ -273,7 +279,7 @@ async def chat_completion(
                     writer.close()
                     await writer.wait_closed()
 
-            return status_code, reason, resp_headers, gen_stream()
+            return gen_stream()
         else:  # no stream
 
             async def gen_content():
@@ -287,13 +293,40 @@ async def chat_completion(
                     writer.close()
                     await writer.wait_closed()
 
-            return status_code, reason, resp_headers, gen_content()
+            return gen_content()
 
 
-def build_llm_translate_request(
-    provider: Literal["deepseek", "siliconflow", "openrouter"],
+def _update_reasoning_effort_in_request_body(
+    provider: LLMProvider,
+    req_body: Dict,
+    reasoning_effort: LLMReasoningEffort,
+) -> None:
+    if provider == "DeepSeek":
+        # https://api-docs.deepseek.com/guides/thinking_mode
+        if reasoning_effort != "none":
+            req_body["thinking"] = {"type": "enabled"}
+            req_body["reasoning_effort"] = reasoning_effort
+        else:
+            req_body["thinking"] = {"type": "disabled"}
+    elif provider == "SiliconFlow":
+        # https://api-docs.siliconflow.cn/docs/api/chat-completions-post
+        if reasoning_effort != "none":
+            req_body["enable_thinking"] = True
+            req_body["reasoning_effort"] = reasoning_effort
+        else:
+            req_body["enable_thinking"] = False
+    elif provider in ("OpenRouter", "OpenAI", "OpenAI-compatible"):
+        # https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#reasoning-effort-level
+        # https://developers.openai.com/api/docs/guides/reasoning#reasoning-effort
+        req_body["reasoning"] = {
+            "effort": reasoning_effort,
+        }
+
+
+def _build_llm_translate_request(
+    provider: LLMProvider,
     model: str,
-    thinking: bool,
+    reasoning_effort: LLMReasoningEffort,
     stream: bool,
     src: str,
     target_lang: str,
@@ -315,31 +348,26 @@ def build_llm_translate_request(
             },
             {"role": "user", "content": src},
         ],
-        "thinking": {"type": "disabled"},
         "stream": stream,
     }
 
-    if provider == "deepseek":
-        if thinking:
-            body["thinking"] = {"type": "enabled"}
-            body["reasoning_effort"] = "high"  # higt or max
-        else:
-            body["thinking"] = {"type": "disabled"}
-    elif provider == "siliconflow":
-        if thinking:
-            body["enable_thinking"] = True
-            body["reasoning_effort"] = "high"  # higt or max
-        else:
-            body["enable_thinking"] = False
-    elif provider == "openrouter":
-        # https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#reasoning-effort-level
-        if thinking:
-            body["reasoning"] = {
-                "enabled": True,
-            }
-        else:
-            body["reasoning"] = {
-                "effort": "none",
-            }
+    _update_reasoning_effort_in_request_body(provider, body, reasoning_effort)
 
     return body
+
+
+async def translate(
+    provider: LLMProvider,
+    base_url: str,
+    api_key: str,
+    model: str,
+    reasoning_effort: LLMReasoningEffort,
+    stream: bool,
+    src: str,
+    target_lang: str,
+) -> AsyncGenerator[str]:
+    req_body = _build_llm_translate_request(
+        provider, model, reasoning_effort, stream, src, target_lang
+    )
+    async for chunk in await _chat_completion(base_url, api_key, req_body, stream):
+        yield chunk

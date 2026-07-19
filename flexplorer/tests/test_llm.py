@@ -10,7 +10,7 @@ import unittest
 import uuid
 
 from typing import Tuple
-from flexplorer.llm import LLMApiError, build_llm_translate_request, chat_completion
+from flexplorer.llm import LLMApiError, _build_llm_translate_request, _chat_completion
 
 
 class LLMTestServer:
@@ -340,19 +340,15 @@ class TestLLMApi(unittest.IsolatedAsyncioTestCase):
         api_key = self._server.api_key()
         model = self._server.model()
         src = "".join(random.choices("张三李四王五" + string.printable, k=10))
-        req_body = build_llm_translate_request(
-            provider="deepseek",
+        req_body = _build_llm_translate_request(
+            provider="DeepSeek",
             model=model,
-            thinking=False,
+            reasoning_effort="medium",
             stream=False,
             src=src,
             target_lang="中文",
         )
-        status_code, reason, headers, content_gen = await chat_completion(
-            base_url, api_key, req_body, stream=False
-        )
-        assert status_code == 200
-        assert reason == "OK"
+        content_gen = await _chat_completion(base_url, api_key, req_body, stream=False)
         assert content_gen
 
         dst = ""
@@ -365,19 +361,15 @@ class TestLLMApi(unittest.IsolatedAsyncioTestCase):
         api_key = self._server.api_key()
         model = self._server.model()
         src = "".join(random.choices("张三李四王五" + string.printable, k=100))
-        req_body = build_llm_translate_request(
-            provider="deepseek",
+        req_body = _build_llm_translate_request(
+            provider="DeepSeek",
             model=model,
-            thinking=False,
+            reasoning_effort="medium",
             stream=False,
             src=src,
             target_lang="中文",
         )
-        status_code, reason, headers, content_gen = await chat_completion(
-            base_url, api_key, req_body, stream=False
-        )
-        assert status_code == 200
-        assert reason == "OK"
+        content_gen = await _chat_completion(base_url, api_key, req_body, stream=False)
         assert content_gen
 
         dst = ""
@@ -390,19 +382,15 @@ class TestLLMApi(unittest.IsolatedAsyncioTestCase):
         api_key = self._server.api_key()
         model = self._server.model()
         src = "".join(random.choices("张三李四王五" + string.printable, k=100))
-        req_body = build_llm_translate_request(
-            provider="deepseek",
+        req_body = _build_llm_translate_request(
+            provider="DeepSeek",
             model=model,
-            thinking=False,
+            reasoning_effort="medium",
             stream=True,
             src=src,
             target_lang="中文",
         )
-        status_code, reason, headers, content_gen = await chat_completion(
-            base_url, api_key, req_body, stream=True
-        )
-        assert status_code == 200
-        assert reason == "OK"
+        content_gen = await _chat_completion(base_url, api_key, req_body, stream=True)
         assert content_gen
 
         dst = ""
@@ -415,29 +403,29 @@ class TestLLMApi(unittest.IsolatedAsyncioTestCase):
         api_key = secrets.token_hex(15)
         model = self._server.model()
         src = "".join(random.choices("张三李四王五" + string.printable, k=10))
-        req_body = build_llm_translate_request(
-            provider="deepseek",
+        req_body = _build_llm_translate_request(
+            provider="DeepSeek",
             model=model,
-            thinking=False,
+            reasoning_effort="medium",
             stream=False,
             src=src,
             target_lang="中文",
         )
         with self.assertRaises(LLMApiError):
-            await chat_completion(base_url, api_key, req_body, stream=False)
+            await _chat_completion(base_url, api_key, req_body, stream=False)
 
     async def test_mismatch_model(self):
         base_url = f"http://{self._host}:{self._port}/content"
         api_key = self._server.api_key()
         model = "text-100.999"
         src = "".join(random.choices("张三李四王五" + string.printable, k=10))
-        req_body = build_llm_translate_request(
-            provider="deepseek",
+        req_body = _build_llm_translate_request(
+            provider="DeepSeek",
             model=model,
-            thinking=False,
+            reasoning_effort="medium",
             stream=False,
             src=src,
             target_lang="中文",
         )
         with self.assertRaises(LLMApiError):
-            await chat_completion(base_url, api_key, req_body, stream=False)
+            await _chat_completion(base_url, api_key, req_body, stream=False)

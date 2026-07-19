@@ -7,7 +7,7 @@ from collections import OrderedDict
 from unittest import TestCase, main
 from flexplorer.settings import (
     APP_NAME,
-    LLM,
+    LLMSetting,
     Cipher,
     Settings,
     SimpleCryptex,
@@ -141,29 +141,27 @@ class TestEncryptDecrypt(TestCase):
 
 class TestSettingSerializer(TestCase):
     def test_without_cipher(self):
-        llm = LLM()
+        llm = LLMSetting()
         llm.name = _random_chars(1, 10)
-        llm.provider = "deepseek"
+        llm.provider = "DeepSeek"
         llm.model = "test-1.0-flash"
-        llm.completions_url = "https://" + _random_chars(1, 10)
-        llm.thinking = True
-        llm.preferred = False
+        llm.base_url = "https://" + _random_chars(1, 10)
+        llm.reasoning_effort = "medium"
         derialized = setting_to_strdict("llms", llm)
-        deserialized = setting_from_strdict("llms", LLM, derialized)
+        deserialized = setting_from_strdict("llms", LLMSetting, derialized)
         self.assertEqual(llm, deserialized)
 
     def test_with_cipher(self):
         try:
-            llm = LLM()
+            llm = LLMSetting()
             llm.name = _random_chars(1, 10)
-            llm.provider = "deepseek"
+            llm.provider = "DeepSeek"
             llm.api_key = Cipher(_random_chars(6, 10))
             llm.model = "test-1.0-flash"
-            llm.completions_url = "https://" + _random_chars(1, 10)
-            llm.thinking = True
-            llm.preferred = False
+            llm.base_url = "https://" + _random_chars(1, 10)
+            llm.reasoning_effort = "medium"
             derialized = setting_to_strdict("llm", llm)
-            deserialized = setting_from_strdict("llm", LLM, derialized)
+            deserialized = setting_from_strdict("llm", LLMSetting, derialized)
             self.assertEqual(llm, deserialized)
         finally:
             clean_cryptex_with_attrs(
@@ -200,14 +198,13 @@ class TestSettingsSerializer(TestCase):
         try:
             settings.recent.open_file_dirpath = _random_chars(1, 10)
             settings.llms = [
-                LLM(
+                LLMSetting(
                     name=_random_chars(1, 10),
-                    provider="deepseek",
+                    provider="DeepSeek",
                     api_key=Cipher(_random_chars(6, 10)),
                     model="test-1.0-flash",
-                    completions_url="https://" + _random_chars(1, 10),
-                    thinking=True,
-                    preferred=False,
+                    base_url="https://" + _random_chars(1, 10),
+                    reasoning_effort="medium",
                 )
             ]
             save_settings(settings, settings_path)
@@ -235,14 +232,13 @@ class TestSettingsSerializer(TestCase):
             settings.recent.open_file_dirpath = _random_chars(1, 10)
             for _ in range(random.randint(3, 10)):
                 settings.llms = [
-                    LLM(
+                    LLMSetting(
                         name=_random_chars(1, 10),
-                        provider="deepseek",
+                        provider="DeepSeek",
                         api_key=Cipher(_random_chars(6, 10)),
                         model="test-1.0-flash",
-                        completions_url="https://" + _random_chars(1, 10),
-                        thinking=True,
-                        preferred=False,
+                        base_url="https://" + _random_chars(1, 10),
+                        reasoning_effort="medium",
                     )
                 ]
             save_settings(settings, settings_path)
