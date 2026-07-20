@@ -3,8 +3,8 @@ import random
 import string
 import time
 import tempfile
+import unittest
 from collections import OrderedDict
-from unittest import TestCase, main
 from flexplorer.settings import (
     APP_NAME,
     LLMSetting,
@@ -23,14 +23,11 @@ from flexplorer.settings import (
 
 
 def _random_chars(min_length: int, max_length: int) -> str:
-    chars = "".join(
-        random.choice("张三李四王五" + string.hexdigits)
-        for _ in range(random.randint(min_length, max_length))
-    )
-    return chars
+    k = random.randint(min_length, max_length)
+    return "".join(random.choices("张三李四王五" + string.hexdigits, k=k))
 
 
-class TestSimpleCryptex(TestCase):
+class TestSimpleCryptex(unittest.TestCase):
     def test_cryptex(self):
         attrs: OrderedDict[str, str] = OrderedDict(
             [
@@ -78,7 +75,7 @@ class TestSimpleCryptex(TestCase):
             cryptex.decrypt(attrs, bad_ciphertext)
 
 
-class TestEncryptDecrypt(TestCase):
+class TestEncryptDecrypt(unittest.TestCase):
     def test_encrypt_decrypt(self):
         attrs: OrderedDict[str, str] = OrderedDict(
             [
@@ -139,7 +136,7 @@ class TestEncryptDecrypt(TestCase):
             clean_cryptex_with_attrs(attrs)
 
 
-class TestSettingSerializer(TestCase):
+class TestSettingSerializer(unittest.TestCase):
     def test_without_cipher(self):
         llm = LLMSetting()
         llm.name = _random_chars(1, 10)
@@ -175,7 +172,7 @@ class TestSettingSerializer(TestCase):
             )
 
 
-class TestSettingsSerializer(TestCase):
+class TestSettingsSerializer(unittest.TestCase):
     def test_without_no_llms(self):
         settings_path = os.path.join(
             tempfile.gettempdir(), f"settings_{time.time_ns()}.ini"
@@ -231,7 +228,7 @@ class TestSettingsSerializer(TestCase):
         try:
             settings.recent.open_file_dirpath = _random_chars(1, 10)
             for _ in range(random.randint(3, 10)):
-                settings.llms = [
+                settings.llms.append(
                     LLMSetting(
                         name=_random_chars(1, 10),
                         provider="DeepSeek",
@@ -240,7 +237,7 @@ class TestSettingsSerializer(TestCase):
                         base_url="https://" + _random_chars(1, 10),
                         reasoning_effort="medium",
                     )
-                ]
+                )
             save_settings(settings, settings_path)
             loaded = load_settings(settings_filepath=settings_path)
             self.assertEqual(settings, loaded)
@@ -255,7 +252,3 @@ class TestSettingsSerializer(TestCase):
                     ]
                 )
             )
-
-
-if __name__ == "__main__":
-    main()
