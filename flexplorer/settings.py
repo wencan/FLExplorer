@@ -10,12 +10,14 @@ import pathlib
 import shutil
 import dataclasses
 import signal
+import string
 import subprocess
 import hashlib
 import hmac
 import secrets
 from collections import OrderedDict
 import sys
+import time
 from typing import (
     List,
     Mapping,
@@ -29,6 +31,7 @@ from typing import (
 __all__ = [
     "APP_NAME",
     "SYS_NAME",
+    "generate_unique_code",
     "load_settings",
     "save_settings",
     "Cipher",
@@ -74,6 +77,7 @@ LLMReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"
 
 @dataclasses.dataclass
 class LLMSetting:
+    unique_code: str = ""  #
     name: str = ""
     provider: LLMProvider = "DeepSeek"
     base_url: str = ""
@@ -87,6 +91,19 @@ class LLMSetting:
 class Settings:
     recent: RecentSetting = dataclasses.field(default_factory=RecentSetting)
     llms: List[LLMSetting] = dataclasses.field(default_factory=list)
+
+
+def generate_unique_code() -> str:
+    start_ns = 1767225600000000000  # 2026-01-01T00:00:00Z in nanoseconds
+    now_ns = time.time_ns()
+    ns = now_ns - start_ns
+
+    ns_base36 = ""
+    while ns > 0:
+        ns, rem = divmod(ns, 36)
+        ns_base36 = (string.digits + string.ascii_uppercase)[rem] + ns_base36
+
+    return ns_base36
 
 
 def _setting_dir_path() -> str:
@@ -620,7 +637,8 @@ def save_settings(settings: Settings, settings_filepath: str = _SETTINGS_FILE_PA
         setting = getattr(settings, setting_name)
         if get_origin(type_) is list:
             for setting in setting:
-                item_name = getattr(setting, "name")
+                item_name = getattr(setting, "unique_code")
+                assert item_name is not None
                 full_name = f"{setting_name}_{item_name}"
                 parser[full_name] = setting_to_strdict(full_name, setting)
         else:

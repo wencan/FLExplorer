@@ -13,6 +13,7 @@ from flexplorer.settings import (
     LLMSetting,
     LLMProvider,
     LLMReasoningEffort,
+    generate_unique_code,
 )
 
 __all__ = [
@@ -134,6 +135,11 @@ class _LLMSettingForm(ttk.Frame):
         self._validatecommand = validatecommand
         self._confirmcommand = confirmcommand
         self._cancelcommand = cancelcommand
+
+        # when starting to edit an existing setting,
+        # the unique_code of that setting will be saved.
+        # if unique_code is empty, it indicates that a new setting is being created.
+        self._unique_code = ""
 
         self._name_var = tk.StringVar()
         self._provider_var = tk.StringVar()
@@ -259,7 +265,12 @@ class _LLMSettingForm(ttk.Frame):
         if api_key == "":
             raise _ValidateError("Please enter an API key for the LLM")
 
+        if self._unique_code == "":
+            # it indicates that a new LLM setting is being created.
+            self._unique_code = generate_unique_code()
+
         llm_setting = LLMSetting(
+            unique_code=self._unique_code,
             name=name,
             provider=cast(LLMProvider, provider),
             model=model,
@@ -317,8 +328,11 @@ class _LLMSettingForm(ttk.Frame):
         self._enable()
 
         if llm_setting is None:
+            # This indicates that a new LLM setting is being created.
+            self._unique_code = ""
             self._clean()
         else:
+            self._unique_code = llm_setting.unique_code
             self._name_var.set(llm_setting.name)
             self._provider_var.set(llm_setting.provider)
             self._model_var.set(llm_setting.model)

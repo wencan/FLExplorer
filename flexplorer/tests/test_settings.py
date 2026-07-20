@@ -15,6 +15,7 @@ from flexplorer.settings import (
     decrypt_with_attrs,
     clean_cryptex_with_attrs,
     DecryptError,
+    generate_unique_code,
     load_settings,
     save_settings,
     setting_from_strdict,
@@ -139,6 +140,7 @@ class TestEncryptDecrypt(unittest.TestCase):
 class TestSettingSerializer(unittest.TestCase):
     def test_without_cipher(self):
         llm = LLMSetting()
+        llm.unique_code = generate_unique_code()
         llm.name = _random_chars(1, 10)
         llm.provider = "DeepSeek"
         llm.model = "test-1.0-flash"
@@ -151,6 +153,7 @@ class TestSettingSerializer(unittest.TestCase):
     def test_with_cipher(self):
         try:
             llm = LLMSetting()
+            llm.unique_code = generate_unique_code()
             llm.name = _random_chars(1, 10)
             llm.provider = "DeepSeek"
             llm.api_key = Cipher(_random_chars(6, 10))
@@ -196,6 +199,7 @@ class TestSettingsSerializer(unittest.TestCase):
             settings.recent.open_file_dirpath = _random_chars(1, 10)
             settings.llms = [
                 LLMSetting(
+                    unique_code=generate_unique_code(),
                     name=_random_chars(1, 10),
                     provider="DeepSeek",
                     api_key=Cipher(_random_chars(6, 10)),
@@ -230,6 +234,7 @@ class TestSettingsSerializer(unittest.TestCase):
             for _ in range(random.randint(3, 10)):
                 settings.llms.append(
                     LLMSetting(
+                        unique_code=generate_unique_code(),
                         name=_random_chars(1, 10),
                         provider="DeepSeek",
                         api_key=Cipher(_random_chars(6, 10)),
