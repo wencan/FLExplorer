@@ -7,6 +7,7 @@ import platform
 import os
 import os.path
 import pathlib
+import re
 import shutil
 import dataclasses
 import signal
@@ -22,6 +23,7 @@ from typing import (
     List,
     Mapping,
     Literal,
+    Tuple,
     get_args,
     get_origin,
     get_type_hints,
@@ -32,9 +34,11 @@ __all__ = [
     "APP_NAME",
     "SYS_NAME",
     "generate_unique_code",
+    "build_setting_attrs",
     "load_settings",
     "save_settings",
     "Cipher",
+    "clean_cryptex",
     "LLMSetting",
     "LLMProvider",
     "LLMReasoningEffort",
@@ -60,7 +64,10 @@ class RecentSetting:
     open_file_dirpath: str = ""
 
 
-class Cipher(str): ...
+class Cipher(str):
+    """A plaintext string requiring encrypted storage."""
+
+    ...
 
 
 LLMProvider = Literal[
@@ -129,11 +136,15 @@ _SETTINGS_FILE_PATH = os.path.join(_SETTINGS_DIR_PATH, "settings.ini")
 class _Cryptex(Protocol):
     scheme: str
 
+    def __init__(self, app_name: str): ...
+
     def encrypt(self, attrs: OrderedDict[str, str], plaintext: str) -> str: ...
 
     def decrypt(self, attrs: OrderedDict[str, str], ciphertext: str) -> str: ...
 
     def clean(self, attrs: OrderedDict[str, str]): ...
+
+    def clean_all(self, search_attrs: OrderedDict[str, str]): ...
 
 
 class CalledProcessError(subprocess.CalledProcessError):
@@ -171,6 +182,9 @@ class DecryptError(Exception): ...
 class LinuxCryptex:
     scheme = "secret"
 
+    def __init__(self, app_name: str):
+        self._app_name = app_name
+
     def encrypt(self, attrs: OrderedDict[str, str], plaintext: str) -> str:
         cmd = ["secret-tool", "store"]
         cmd += ["--label", "-".join([v for v in attrs.values()])]
@@ -198,7 +212,7 @@ class LinuxCryptex:
         if r.returncode == 0:
             return r.stdout.strip()
         elif r.returncode == 1:  # not found
-            raise DecryptError("not found")
+            raise LookupError("not found")
         else:
             raise CalledProcessError(
                 r.returncode, cmd, output=r.stdout, stderr=r.stderr
@@ -214,6 +228,40 @@ class LinuxCryptex:
             raise CalledProcessError(
                 r.returncode, cmd, output=r.stdout, stderr=r.stderr
             )
+
+    def clean_all(self, search_attrs: OrderedDict[str, str]):
+        if len(search_attrs) == 0:
+            raise ValueError("search_attrs must not be empty")
+
+        cmd = ["secret-tool", "search", "--all"]
+        cmd += [kv for pair in search_attrs.items() for kv in pair]
+        r = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            text=True,
+        )
+        if r.returncode != 0:
+            raise CalledProcessError(
+                r.returncode, cmd, output=r.stdout, stderr=r.stderr
+            )
+
+        lines = r.stdout.splitlines()
+        attrs_list: List[OrderedDict[str, str]] = []
+        for line in lines:
+            if re.match(r"^\[\/\d+\]$", line):
+                attrs_list.append(OrderedDict())
+                continue
+            if line.startswith("attribute."):
+                parts = line.split("=", 1)
+                assert len(parts) == 2
+                key, value = parts[0].strip(), parts[1].strip()
+                key = key[len("attribute.") :]
+                attrs_list[-1][key] = value
+
+        for attrs in attrs_list:
+            self.clean(attrs)
 
 
 class _DATA_BLOB(ctypes.Structure):
@@ -241,6 +289,9 @@ def _from_blob(blob: _DATA_BLOB) -> bytes:
 
 class WindowsCryptex:
     scheme = "dpapi"
+
+    def __init__(self, app_name: str):
+        self._app_name = app_name
 
     def encrypt(self, attrs: OrderedDict[str, str], plaintext: str) -> str:
         in_blob = _to_blob(plaintext.encode("utf-8"))
@@ -300,9 +351,15 @@ class WindowsCryptex:
     def clean(self, attrs: OrderedDict[str, str]):
         pass
 
+    def clean_all(self, search_attrs: OrderedDict[str, str]):
+        pass
+
 
 class DarwinCryptex:
     scheme = "security"
+
+    def __init__(self, app_name: str):
+        self._app_name = app_name
 
     def encrypt(self, attrs: OrderedDict[str, str], plaintext: str) -> str:
         account = "-".join([f"{k}:{v}" for k, v in attrs.items()])
@@ -316,7 +373,7 @@ class DarwinCryptex:
             "-a",
             account,
             "-s",
-            APP_NAME,
+            self._app_name,
             "-w",
             plaintext_hex,
             "-U",
@@ -344,7 +401,7 @@ class DarwinCryptex:
             "-a",
             account,
             "-s",
-            APP_NAME,
+            self._app_name,
             "-w",
         ]
         r = subprocess.run(
@@ -358,7 +415,7 @@ class DarwinCryptex:
             output = r.stdout.strip()
             return bytes.fromhex(output).decode("utf-8")
         elif r.returncode == 44:
-            raise DecryptError("not found")
+            raise LookupError("not found")
         else:
             raise CalledProcessError(
                 r.returncode, cmd, output=r.stdout, stderr=r.stderr
@@ -366,7 +423,14 @@ class DarwinCryptex:
 
     def clean(self, attrs: OrderedDict[str, str]):
         account = "-".join([f"{k}:{v}" for k, v in attrs.items()])
-        cmd = ["security", "delete-generic-password", "-a", account, "-s", APP_NAME]
+        cmd = [
+            "security",
+            "delete-generic-password",
+            "-a",
+            account,
+            "-s",
+            self._app_name,
+        ]
         r = subprocess.run(
             cmd, capture_output=True, encoding="utf-8", text=True, timeout=5
         )
@@ -374,6 +438,9 @@ class DarwinCryptex:
             raise CalledProcessError(
                 r.returncode, cmd, output=r.stdout, stderr=r.stderr
             )
+
+    def clean_all(self, search_attrs: OrderedDict[str, str]):
+        raise NotImplementedError()
 
 
 def _xor_bytes(b1: bytes, b2: bytes) -> bytes:
@@ -455,6 +522,9 @@ def _simple_decrypt(ciphertext: bytes, key: bytes) -> bytes:
 class SimpleCryptex:
     scheme = "simple"
 
+    def __init__(self, app_name: str):
+        self._app_name = app_name
+
     def _key(self, attrs: OrderedDict[str, str]) -> str:
         key = ""
         if MACHINE_ID != "":
@@ -481,64 +551,116 @@ class SimpleCryptex:
     def clean(self, attrs: OrderedDict[str, str]):
         pass
 
+    def clean_all(self, search_attrs: OrderedDict[str, str]):
+        pass
 
-def _cryptex_for_environ() -> _Cryptex:
+
+def _cryptex_for_environ() -> type[_Cryptex]:
     if SYS_NAME == "Linux":
         if shutil.which("secret-tool") is not None:
-            return LinuxCryptex()
+            return LinuxCryptex
     elif SYS_NAME == "Windows":
-        return WindowsCryptex()
+        return WindowsCryptex
     elif SYS_NAME == "Darwin":
         if shutil.which("security") is not None:
-            return DarwinCryptex()
+            return DarwinCryptex
 
     # fallback
-    return SimpleCryptex()
+    return SimpleCryptex
 
 
-def encrypt_with_attrs(attrs: OrderedDict[str, str], plaintext: str) -> str:
-    cryptex = _cryptex_for_environ()
+_attrs2scheme = {}
+
+
+def encrypt_with_attrs(
+    app_name: str, attrs: OrderedDict[str, str], plaintext: str
+) -> str:
+    cryptex_cls = _cryptex_for_environ()
+    cryptex = cryptex_cls(app_name)
     ciphertext = cryptex.encrypt(attrs, plaintext)
     scheme = cryptex.scheme
-    return f"{scheme}:{ciphertext}"
+    ciphertext = f"{scheme}:{ciphertext}"
+
+    _attrs2scheme[tuple(attrs.items())] = scheme
+
+    return ciphertext
 
 
-def decrypt_with_attrs(attrs: OrderedDict[str, str], ciphertext: str) -> str:
+def _cryptex_for_scheme(scheme: str) -> type[_Cryptex] | None:
+    cryptex_clses: Tuple[type[_Cryptex], ...] = (
+        LinuxCryptex,
+        WindowsCryptex,
+        DarwinCryptex,
+        SimpleCryptex,
+    )
+    for cryptex_cls in cryptex_clses:
+        if scheme == cryptex_cls.scheme:
+            return cryptex_cls
+    return None
+
+
+def decrypt_with_attrs(
+    app_name: str, attrs: OrderedDict[str, str], ciphertext: str
+) -> str:
     parts = ciphertext.split(":")
     if len(parts) != 2:
         raise ValueError(f"invalid ciphertext: {ciphertext}")
     scheme, cipher_part = parts[0], parts[1]
 
-    if scheme == LinuxCryptex.scheme:
-        cryptex = LinuxCryptex()
-    elif scheme == WindowsCryptex.scheme:
-        cryptex = WindowsCryptex()
-    elif scheme == DarwinCryptex.scheme:
-        cryptex = DarwinCryptex()
-    elif scheme == SimpleCryptex.scheme:
-        cryptex = SimpleCryptex()
-    else:
+    cryptex_cls = _cryptex_for_scheme(scheme)
+    if cryptex_cls is None:
         raise DecryptError(f"Unsupported encryption scheme {scheme}")
 
-    return cryptex.decrypt(attrs, cipher_part)
+    cryptex = cryptex_cls(app_name)
+    plaintext = cryptex.decrypt(attrs, cipher_part)
+
+    _attrs2scheme[tuple(attrs.items())] = scheme
+
+    return plaintext
 
 
-def clean_cryptex_with_attrs(attrs: OrderedDict[str, str]):
-    cryptex = _cryptex_for_environ()
+def clean_cryptex_with_attrs(app_name: str, attrs: OrderedDict[str, str]):
+    key = tuple(attrs.items())
+    scheme = _attrs2scheme.get(key)
+    if scheme is None:
+        raise LookupError(f"No encryption scheme found for {attrs}")
+
+    cryptex_cls = _cryptex_for_scheme(scheme)
+    if cryptex_cls is None:
+        raise DecryptError(f"Unsupported encryption scheme {scheme}")
+    cryptex = cryptex_cls(app_name)
     cryptex.clean(attrs)
+
+    del _attrs2scheme[key]
+
+
+def clean_cryptex(app_name: str):
+    cryptex_cls = _cryptex_for_environ()
+    cryptex = cryptex_cls(app_name)
+    cryptex.clean_all(OrderedDict([("app", app_name)]))
 
 
 def _strtobool(val: str) -> bool:
     val = val.lower()
-    if val in ("y", "yes", "t", "true", "True", "on", "1"):
+    if val in ("y", "yes", "t", "true", "on", "1"):
         return True
-    elif val in ("n", "no", "f", "false", "False", "off", "0"):
+    elif val in ("n", "no", "f", "false", "off", "0"):
         return False
     else:
         raise ValueError(f"invalid bool value {val!r}")
 
 
-def setting_from_strdict(setting_name: str, data_cls, str_dict: Mapping[str, str]):
+def build_setting_attrs(
+    app_name: str, setting_name: str, field_name: str
+) -> OrderedDict[str, str]:
+    return OrderedDict(
+        [("app", app_name), ("setting", setting_name), ("field", field_name)]
+    )
+
+
+def setting_from_strdict(
+    app_name: str, setting_name: str, data_cls, str_dict: Mapping[str, str]
+):
     """Convert a dict whose keys and values are both strings into a setting dataclass object."""
     hints = get_type_hints(data_cls)
 
@@ -559,17 +681,15 @@ def setting_from_strdict(setting_name: str, data_cls, str_dict: Mapping[str, str
                 v = _strtobool(v)
             elif vtype is Cipher:
                 if v != "":
-                    attrs: OrderedDict[str, str] = OrderedDict(
-                        [("app", APP_NAME), ("setting", setting_name), ("field", k)]
-                    )
-                    v = decrypt_with_attrs(attrs, v)
+                    attrs = build_setting_attrs(app_name, setting_name, k)
+                    v = decrypt_with_attrs(app_name, attrs, v)
             else:
                 v = hints[k](v)
         kvs[k] = v
     return data_cls(**kvs)
 
 
-def setting_to_strdict(setting_name: str, data):
+def setting_to_strdict(app_name: str, setting_name: str, data):
     """Convert a setting dataclass object into a dict whose keys and values are both strings."""
     d = {}
     for field in dataclasses.fields(data):
@@ -579,15 +699,15 @@ def setting_to_strdict(setting_name: str, data):
             v = str(v).lower()
         elif field.type is Cipher:
             if v != "":
-                attrs: OrderedDict[str, str] = OrderedDict(
-                    [("app", APP_NAME), ("setting", setting_name), ("field", k)]
-                )
-                v = encrypt_with_attrs(attrs, v)
+                attrs = build_setting_attrs(app_name, setting_name, k)
+                v = encrypt_with_attrs(app_name, attrs, v)
         d[k] = v
     return d
 
 
-def load_settings(settings_filepath: str = _SETTINGS_FILE_PATH) -> Settings:
+def load_settings(
+    settings_filepath: str = _SETTINGS_FILE_PATH, app_name: str = APP_NAME
+) -> Settings:
     parser = configparser.ConfigParser()
     parser.read(settings_filepath, encoding="utf-8")
 
@@ -598,16 +718,16 @@ def load_settings(settings_filepath: str = _SETTINGS_FILE_PATH) -> Settings:
             setting_type = get_args(type_)[0]
 
             setting_list = []
-            for full_name in parser.sections():
-                if full_name.startswith(f"{setting_name}_"):
-                    str_dict = parser[full_name]
+            for full_setting_name in parser.sections():
+                if full_setting_name.startswith(f"{setting_name}_"):
+                    str_dict = parser[full_setting_name]
                     try:
                         setting = setting_from_strdict(
-                            full_name, setting_type, str_dict
+                            app_name, full_setting_name, setting_type, str_dict
                         )
                     except DecryptError as e:
                         print(
-                            f"failed to decrypt section [{full_name}]: {e}",
+                            f"failed to decrypt section [{full_setting_name}]: {e}",
                             file=sys.stderr,
                         )
                     else:
@@ -618,7 +738,9 @@ def load_settings(settings_filepath: str = _SETTINGS_FILE_PATH) -> Settings:
             if parser.has_section(setting_name):
                 str_dict = parser[setting_name]
                 try:
-                    setting = setting_from_strdict(setting_name, setting_type, str_dict)
+                    setting = setting_from_strdict(
+                        app_name, setting_name, setting_type, str_dict
+                    )
                 except DecryptError as e:
                     print(
                         f"failed to decrypt section [{setting_name}]: {e}",
@@ -630,20 +752,68 @@ def load_settings(settings_filepath: str = _SETTINGS_FILE_PATH) -> Settings:
     return Settings(**settings_dict)
 
 
-def save_settings(settings: Settings, settings_filepath: str = _SETTINGS_FILE_PATH):
+def _save_settings(
+    app_name: str,
+    settings: Settings,
+    settings_filepath: str = _SETTINGS_FILE_PATH,
+):
     parser = configparser.ConfigParser()
 
     for setting_name, type_ in get_type_hints(Settings).items():
         setting = getattr(settings, setting_name)
         if get_origin(type_) is list:
-            for setting in setting:
-                item_name = getattr(setting, "unique_code")
-                assert item_name is not None
-                full_name = f"{setting_name}_{item_name}"
-                parser[full_name] = setting_to_strdict(full_name, setting)
+            setting_list = setting
+            for setting in setting_list:
+                unique_code = getattr(setting, "unique_code")
+                assert unique_code is not None
+                full_setting_name = f"{setting_name}_{unique_code}"
+                parser[full_setting_name] = setting_to_strdict(
+                    app_name, full_setting_name, setting
+                )
         else:
-            parser[setting_name] = setting_to_strdict(setting_name, setting)
+            parser[setting_name] = setting_to_strdict(app_name, setting_name, setting)
 
     os.makedirs(os.path.dirname(settings_filepath), exist_ok=True)
     with open(settings_filepath, "w", encoding="utf-8") as f:
         parser.write(f)
+
+
+def _clean_cryptex_for_deleted_setting(
+    app_name: str, new_settings: Settings, pre_settings: Settings
+):
+    for setting_name, type_ in get_type_hints(Settings).items():
+        pre_setting = getattr(pre_settings, setting_name)
+        if get_origin(type_) is list:
+            pre_setting_list = pre_setting
+            for pre_setting in pre_setting_list:
+                unique_code = getattr(pre_setting, "unique_code")
+                assert unique_code is not None
+
+                # check if the setting is deleted
+                deleted = True
+                new_setting_list = getattr(new_settings, setting_name)
+                for new_setting in new_setting_list:
+                    if getattr(new_setting, "unique_code") == unique_code:
+                        deleted = False
+                if not deleted:
+                    continue
+
+                full_setting_name = f"{setting_name}_{unique_code}"
+                sub_type = get_args(type_)[0]
+                for filed_name, field_type in get_type_hints(sub_type).items():
+                    if field_type is Cipher:
+                        attrs = build_setting_attrs(
+                            app_name, full_setting_name, filed_name
+                        )
+                        clean_cryptex_with_attrs(app_name, attrs)
+
+
+def save_settings(
+    new_settings: Settings,
+    settings_filepath: str = _SETTINGS_FILE_PATH,
+    previous_settings: Settings | None = None,
+    app_name: str = APP_NAME,
+):
+    _save_settings(app_name, new_settings, settings_filepath)
+    if previous_settings is not None:
+        _clean_cryptex_for_deleted_setting(app_name, new_settings, previous_settings)

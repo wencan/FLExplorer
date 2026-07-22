@@ -371,8 +371,9 @@ class App:
         settings_dialog = SettingsDialog(self._root, self._settings)
         self._root.wait_window(settings_dialog)
 
+        previous_settings = self._settings
         self._settings = settings_dialog.settings()
-        save_settings(self._settings)
+        save_settings(self._settings, previous_settings=previous_settings)
 
     def _on_exit(self, *args):
         self._root.destroy()
